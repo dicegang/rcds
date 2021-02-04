@@ -1,0 +1,54 @@
+{% import '_helpers.jinja' as helpers with context %}
+# A GLOBAL RESOURCE - NOT BOUND TO A CHALLENGE
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  namespace: {{ namespace }}
+  name: sysconfig
+  labels:
+    app.kubernetes.io/managed-by: rcds
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/managed-by: rcds
+      app.kubernetes.io/name: sysconfig
+      app.kubernetes.io/instance: sysconfig
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/managed-by: rcds
+        app.kubernetes.io/name: sysconfig
+        app.kubernetes.io/instance: sysconfig
+      annotations:
+        checksum/configmap-seccomp: {{ checksums.seccomp | quote }}
+    spec:
+      volumes:
+        - name: kubelet-seccomp
+          hostPath:
+            path: /var/lib/kubelet/seccomp/rcds
+            type: DirectoryOrCreate
+        - name: seccomp-configmap
+          configMap:
+            name: sysconfig-seccomp
+      initContainers:
+        - name: configurator
+          image: busybox
+          command:
+            - "sh"
+            - "-c"
+            - "rm -f /kubelet-seccomp/*; cp /sysconfig-seccomp/* /kubelet-seccomp/"
+          volumeMounts:
+            - mountPath: /kubelet-seccomp
+              name: kubelet-seccomp
+            - mountPath: /sysconfig-seccomp
+              name: seccomp-configmap
+      containers:
+        - name: pause
+          image: gcr.io/google_containers/pause:3.2
+          resources:
+            limits:
+              cpu: 50m
+              memory: 50Mi
+            requests:
+              cpu: 1m
+              memory: 1Mi

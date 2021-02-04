@@ -4,10 +4,10 @@ metadata:
   name: rcds
 rules:
 - apiGroups: [""]
-  resources: ["services", "namespaces"]
+  resources: ["services", "namespaces", "configmaps"]
   verbs: ["list", "get", "watch", "create", "update", "patch", "delete"]
 - apiGroups: ["apps"]
-  resources: ["deployments"]
+  resources: ["deployments", "daemonsets"]
   verbs: ["list", "get", "watch", "create", "update", "patch", "delete"]
 - apiGroups: ["networking.k8s.io"]
   resources: ["ingresses", "networkpolicies"]

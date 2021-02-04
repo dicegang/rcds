@@ -1,0 +1,11 @@
+{% import '_helpers.jinja' as helpers with context %}
+# A GLOBAL RESOURCE - NOT BOUND TO A CHALLENGE
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  namespace: {{ namespace }}
+  name: sysconfig-seccomp
+  labels:
+    app.kubernetes.io/managed-by: rcds
+data:
+  {{ data | yaml(2) }}

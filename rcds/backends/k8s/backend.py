@@ -12,7 +12,7 @@ from rcds.util import load_any
 from rcds.util.jsonschema import DefaultValidatingDraft7Validator
 
 from .jinja import jinja_env
-from .manifests import AnyManifest, sync_manifests
+from .manifests import AnyManifest, ensure_seccomp_profiles, sync_manifests
 
 options_schema_validator = DefaultValidatingDraft7Validator(
     schema=load_any(Path(__file__).parent / "options.schema.yaml")
@@ -39,10 +39,35 @@ class ContainerBackend(rcds.backend.BackendContainerRuntime):
 
         config.load_kube_config(context=self._options.get("kubeContext", None))
 
+    def patch_challenge_schema(self, schema: Dict[str, Any]):
+        schema["properties"]["containers"]["additionalProperties"]["properties"][
+            "k8s"
+        ] = {
+            "type": "object",
+            "properties": {
+                "deployment": {
+                    "type": "object",
+                    "properties": {
+                        "annotations": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string",
+                            },
+                        },
+                    },
+                },
+            },
+        }
+
     def commit(self) -> bool:
-        deployed_challs = filter(
-            lambda c: c.config["deployed"], self._project.challenges.values()
+        deployed_challs = list(
+            filter(lambda c: c.config["deployed"], self._project.challenges.values())
         )
+        seccomp_profiles = [
+            p
+            for chall in deployed_challs
+            for p in self.collect_seccomp_rule_paths(chall)
+        ]
         # TODO: auto assignment of expose params
         manifests = list(
             itertools.chain.from_iterable(
@@ -51,6 +76,10 @@ class ContainerBackend(rcds.backend.BackendContainerRuntime):
                     deployed_challs,
                 )
             )
+        )
+
+        ensure_seccomp_profiles(
+            seccomp_profiles, self._project.root / ".rcds" / "seccompProfiles"
         )
         sync_manifests(manifests)
         return True
@@ -108,6 +137,21 @@ class ContainerBackend(rcds.backend.BackendContainerRuntime):
             render_and_append(container_env, "ingress.yaml")
 
         return manifests
+
+    def collect_seccomp_rule_paths(self, challenge: rcds.Challenge) -> List[str]:
+        if "containers" not in challenge.config:
+            return []
+
+        paths = []
+
+        for container_config in challenge.config["containers"].values():
+            try:
+                profile = container_config["securityContext"]["seccompProfile"]
+                paths.append(profile)
+            except KeyError:
+                pass
+
+        return paths
 
 
 class BackendsInfo(rcds.backend.BackendsInfo):

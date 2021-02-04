@@ -18,10 +18,15 @@ spec:
       labels:
         {{ helpers.common_labels() | indent(8) }}
         {{ helpers.container_labels() | indent(8) }}
+      annotations:
+        {% if container.config.k8s and container.config.k8s.deployment and container.config.k8s.deployment.annotations %}
+        {{ container.config.k8s.deployment.annotations | yaml(8) }}
+        {% endif %}
     spec:
       containers:
         - name: {{ container.name }}
           image: {{ container.config.image }}
+          imagePullPolicy: Always
           {% if container.config.ports %}
           ports:
           {% for port in container.config.ports %}
@@ -39,6 +44,15 @@ spec:
           {% if container.config.resources %}
           resources:
             {{ container.config.resources | yaml(12) }}
+          {% endif %}
+          {% if container.config.securityContext %}
+          securityContext:
+            {{ container.config.securityContext | omit(["seccompProfile"]) | yaml(12) }}
+            {% if container.config.securityContext.seccompProfile %}
+            seccompProfile:
+              type: Localhost
+              localhostProfile: rcds/{{ container.config.securityContext.seccompProfile }}
+            {% endif %}
           {% endif %}
       automountServiceAccountToken: false
       {% if options.tolerations %}

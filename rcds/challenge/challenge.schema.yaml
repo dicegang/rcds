@@ -220,6 +220,48 @@ properties:
                   description: >-
                     Memory usage requests for this container.
                   $ref: "#/definitions/memory-value"
+        securityContext:
+          type: object
+          description: >-
+            Security options to set on this container. Follows Kubernetes's
+            SecurityContext format.
+
+            Not all features are supported by all backends.
+          properties:
+            privileged:
+              type: boolean
+              description: >-
+                Run container in privileged mode. Processes in privileged
+                containers are essentially equivalent to root on the host.
+              default: false
+            readOnlyRootFilesystem:
+              type: boolean
+              description: >-
+                Whether this container has a read-only root filesystem.
+              default: false
+            capabilities:
+              type: object
+              description: >-
+                Adds and removes POSIX capabilities from running containers.
+              properties:
+                add:
+                  type: array
+                  description: >-
+                    Added capabilities
+                  items:
+                    type: string
+                drop:
+                  type: array
+                  description: >-
+                    Removed capabilities
+                  items:
+                    type: string
+            seccompProfile:
+              type: string
+              description: >-
+                Filename of a seccomp profile to use, from
+                <project root>/.rcds/seccompProfiles/. Does not follow
+                Kubernetes API!
       anyOf:
       # Either 'image' or 'build' must be specified
       - required:

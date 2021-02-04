@@ -1,18 +1,29 @@
+import hashlib
 import re
+from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Set
 
+import yaml
 from kubernetes import client  # type: ignore
+
+from .jinja import jinja_env as parent_jinja_env
 
 AnyManifest = Dict[str, Any]
 
 
-# namespaced manifests only - namespaces are handled separately
+sysconfig_jinja_env = parent_jinja_env.overlay()
+sysconfig_namespace = "rcdsinternal"  # FIXME: make configurable
+
+
+# namespaced challenge manifests only - namespaces are handled separately
 MANIFEST_KINDS = ["Deployment", "Service", "Ingress", "NetworkPolicy"]
 KIND_TO_API_VERISON = {
     "Deployment": "apps/v1",
     "Service": "v1",
     "Ingress": "networking.k8s.io/v1beta1",
     "NetworkPolicy": "networking.k8s.io/v1",
+    "ConfigMap": "v1",
+    "DaemonSet": "apps/v1",
 }
 
 
@@ -32,6 +43,83 @@ def labels_to_label_selector(labels: Dict[str, str]) -> str:
     for k, v in labels.items():
         selector += f"{k}={v},"
     return selector[:-1]
+
+
+def ensure_seccomp_profiles(profiles: List[str], profile_root: Path):
+    # FIXME: overlaying env still shares globals dict!
+    sysconfig_jinja_env.globals["namespace"] = sysconfig_namespace
+
+    v1 = client.CoreV1Api()
+    appsv1 = client.AppsV1Api()
+
+    profile_files = {profile: profile_root / profile for profile in profiles}
+    profile_contents = {
+        profile_name: profile_file.read_text()
+        for profile_name, profile_file in profile_files.items()
+    }
+    configmap_yaml = sysconfig_jinja_env.get_template(
+        "sysconfig-seccomp-configmap.yaml"
+    ).render({"data": profile_contents})
+    configmap = yaml.safe_load(configmap_yaml)
+
+    configmap_hasher = hashlib.sha256()
+    configmap_hasher.update(configmap_yaml.encode("utf-8"))
+    configmap_hash = configmap_hasher.hexdigest()
+
+    daemonset_yaml = sysconfig_jinja_env.get_template(
+        "sysconfig-daemonset.yaml"
+    ).render(
+        {
+            "checksums": {
+                "seccomp": configmap_hash,
+            },
+        }
+    )
+    daemonset = yaml.safe_load(daemonset_yaml)
+
+    # TODO: unify handling
+    if configmap["metadata"]["name"] in [
+        m.metadata.name
+        for m in get_api_method_for_kind(v1, "list", "ConfigMap")(
+            sysconfig_namespace
+        ).items
+    ]:
+        print(f"PATCH ConfigMap {sysconfig_namespace}/{configmap['metadata']['name']}")
+        get_api_method_for_kind(v1, "patch", "ConfigMap")(
+            configmap["metadata"]["name"], sysconfig_namespace, configmap
+        )
+    else:
+        print(f"CREATE ConfigMap {sysconfig_namespace}/{configmap['metadata']['name']}")
+        get_api_method_for_kind(v1, "create", "ConfigMap")(
+            sysconfig_namespace, configmap
+        )
+    daemonset_name = daemonset["metadata"]["name"]
+    if daemonset_name in [
+        m.metadata.name
+        for m in get_api_method_for_kind(appsv1, "list", "DaemonSet")(
+            sysconfig_namespace
+        ).items
+    ]:
+        try:
+            print(f"PATCH DaemonSet {sysconfig_namespace}/{daemonset_name}")
+            get_api_method_for_kind(appsv1, "patch", "DaemonSet")(
+                daemonset_name, sysconfig_namespace, daemonset
+            )
+        except client.rest.ApiException:
+            # Conflict of some sort - let's just delete and recreate it
+            print(f"DELETE DaemonSet {sysconfig_namespace}/{daemonset_name}")
+            get_api_method_for_kind(appsv1, "delete", "DaemonSet")(
+                daemonset_name, sysconfig_namespace
+            )
+            print(f"CREATE DaemonSet {sysconfig_namespace}/{daemonset_name}")
+            get_api_method_for_kind(appsv1, "create", "DaemonSet")(
+                sysconfig_namespace, daemonset
+            )
+    else:
+        print(f"CREATE DaemonSet {sysconfig_namespace}/{daemonset_name}")
+        get_api_method_for_kind(appsv1, "create", "DaemonSet")(
+            sysconfig_namespace, daemonset
+        )
 
 
 def sync_manifests(all_manifests: Iterable[Dict[str, Any]]):
