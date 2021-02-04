@@ -24,6 +24,7 @@ class ContainerBackend(rcds.backend.BackendContainerRuntime):
     _options: Dict[str, Any]
     _namespace_template: Template
     _jinja_env: Environment
+    _seccomp_profile_root: Path
 
     def __init__(self, project: rcds.Project, options: Dict[str, Any]):
         self._project = project
@@ -38,6 +39,8 @@ class ContainerBackend(rcds.backend.BackendContainerRuntime):
         self._jinja_env.globals["options"] = self._options
 
         config.load_kube_config(context=self._options.get("kubeContext", None))
+
+        self._seccomp_profile_root = self._project.root / ".rcds" / "seccompProfiles"
 
     def patch_challenge_schema(self, schema: Dict[str, Any]):
         schema["properties"]["containers"]["additionalProperties"]["properties"][
@@ -78,9 +81,7 @@ class ContainerBackend(rcds.backend.BackendContainerRuntime):
             )
         )
 
-        ensure_seccomp_profiles(
-            seccomp_profiles, self._project.root / ".rcds" / "seccompProfiles"
-        )
+        ensure_seccomp_profiles(seccomp_profiles, self._seccomp_profile_root)
         sync_manifests(manifests)
         return True
 
@@ -147,6 +148,8 @@ class ContainerBackend(rcds.backend.BackendContainerRuntime):
         for container_config in challenge.config["containers"].values():
             try:
                 profile = container_config["securityContext"]["seccompProfile"]
+                if not (self._seccomp_profile_root / profile).exists():
+                    raise ValueError(f"Cannot find seccomp profile {profile}")
                 paths.append(profile)
             except KeyError:
                 pass
